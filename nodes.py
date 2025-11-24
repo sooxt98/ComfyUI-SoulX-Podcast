@@ -744,16 +744,16 @@ class SoulXPodcastGenerate:
         spk_ids = podcast_input["spk_ids"]
         sample_rate = 24000
         
-        # Track audio segments for each speaker (0-indexed: speaker 0 = S1, speaker 1 = S2, etc.)
-        speaker_audio_segments = {i: [] for i in range(MAX_SUPPORTED_SPEAKERS)}
+        # Track audio segments with timing for temporal alignment
+        # Each entry: (speaker_id, audio_tensor)
+        ordered_segments = []
         
         target_audio = None
         for i, wav in enumerate(results_dict["generated_wavs"]):
-            # Store this segment for the corresponding speaker
+            # Store segment with speaker info for temporal alignment
             if i < len(spk_ids):
                 speaker_id = spk_ids[i]
-                if 0 <= speaker_id < MAX_SUPPORTED_SPEAKERS:
-                    speaker_audio_segments[speaker_id].append(wav.clone())
+                ordered_segments.append((speaker_id, wav.clone()))
             
             if target_audio is None:
                 target_audio = wav
@@ -774,6 +774,8 @@ class SoulXPodcastGenerate:
                             elif target_audio.dim() == 3:
                                 silence = torch.zeros((target_audio.shape[0], target_audio.shape[1], silence_len), dtype=target_audio.dtype, device=target_audio.device)
                                 target_audio = torch.cat([target_audio, silence], dim=2)
+                            # Also track the pause in ordered_segments
+                            ordered_segments.append((None, silence))
                 
                 # Concatenate the audio segments
                 if target_audio.dim() == 3:
@@ -804,30 +806,48 @@ class SoulXPodcastGenerate:
             "sample_rate": sample_rate
         }
         
-        # Create separated speaker audio outputs
+        # Create separated speaker audio outputs with temporal alignment
+        # Each speaker output will have the same total length as combined audio
         speaker_outputs = []
         for speaker_id in range(MAX_SUPPORTED_SPEAKERS):
-            if speaker_audio_segments[speaker_id]:
-                # Concatenate all segments for this speaker
-                speaker_audio = None
-                for seg in speaker_audio_segments[speaker_id]:
-                    if speaker_audio is None:
-                        speaker_audio = seg
+            # Build this speaker's audio with silence where other speakers talk
+            speaker_audio = None
+            for seg_speaker_id, seg_audio in ordered_segments:
+                if seg_speaker_id == speaker_id:
+                    # This is this speaker's segment - use the audio
+                    seg_to_add = seg_audio
+                else:
+                    # This is another speaker's segment or pause - use silence
+                    # Create silence matching the segment length
+                    if seg_audio.dim() == 2:
+                        silence = torch.zeros_like(seg_audio)
+                    elif seg_audio.dim() == 3:
+                        silence = torch.zeros_like(seg_audio)
                     else:
-                        # Concatenate segments
-                        if speaker_audio.dim() == 3:
-                            if seg.dim() == 3:
-                                speaker_audio = torch.cat([speaker_audio, seg], dim=2)
-                            else:
-                                seg = seg.unsqueeze(0)
-                                speaker_audio = torch.cat([speaker_audio, seg], dim=2)
-                        elif speaker_audio.dim() == 2:
-                            if seg.dim() == 2:
-                                speaker_audio = torch.cat([speaker_audio, seg], dim=1)
-                            else:
-                                seg = seg.squeeze(0) if seg.shape[0] == 1 else seg[0]
-                                speaker_audio = torch.cat([speaker_audio, seg], dim=1)
+                        silence = torch.zeros_like(seg_audio)
+                    seg_to_add = silence
                 
+                # Concatenate to speaker_audio
+                if speaker_audio is None:
+                    speaker_audio = seg_to_add
+                else:
+                    if speaker_audio.dim() == 3:
+                        if seg_to_add.dim() == 3:
+                            speaker_audio = torch.cat([speaker_audio, seg_to_add], dim=2)
+                        else:
+                            seg_to_add = seg_to_add.unsqueeze(0)
+                            speaker_audio = torch.cat([speaker_audio, seg_to_add], dim=2)
+                    elif speaker_audio.dim() == 2:
+                        if seg_to_add.dim() == 2:
+                            speaker_audio = torch.cat([speaker_audio, seg_to_add], dim=1)
+                        else:
+                            seg_to_add = seg_to_add.squeeze(0) if seg_to_add.shape[0] == 1 else seg_to_add[0]
+                            speaker_audio = torch.cat([speaker_audio, seg_to_add], dim=1)
+            
+            # Check if this speaker was actually used
+            speaker_was_used = any(seg_speaker_id == speaker_id for seg_speaker_id, _ in ordered_segments)
+            
+            if speaker_was_used and speaker_audio is not None:
                 # Format to match ComfyUI audio format
                 if speaker_audio.dim() == 2:
                     speaker_audio_tensor = speaker_audio.unsqueeze(0)
