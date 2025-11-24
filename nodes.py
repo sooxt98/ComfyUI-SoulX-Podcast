@@ -274,7 +274,7 @@ class SoulXPodcastInputParser:
             parsed_script_texts = {}
             if dialogue_script:
                 try:
-                    temp_text_list, temp_spk_list = self._parse_dialogue_script(dialogue_script)
+                    temp_text_list, temp_spk_list, _ = self._parse_dialogue_script(dialogue_script)
                     for idx, (text, spk_id) in enumerate(zip(temp_text_list, temp_spk_list)):
                         spk_key = f"S{spk_id + 1}"
                         if spk_key not in parsed_script_texts:
@@ -306,7 +306,7 @@ class SoulXPodcastInputParser:
             parsed_script_texts = {}
             if dialogue_script:
                 try:
-                    temp_text_list, temp_spk_list = self._parse_dialogue_script(dialogue_script)
+                    temp_text_list, temp_spk_list, _ = self._parse_dialogue_script(dialogue_script)
                     for idx, (text, spk_id) in enumerate(zip(temp_text_list, temp_spk_list)):
                         spk_key = f"S{spk_id + 1}"
                         if spk_key not in parsed_script_texts:
@@ -348,7 +348,7 @@ class SoulXPodcastInputParser:
             raise ValueError("dialogue_script cannot be empty! Please enter a dialogue script, format: [S1] First sentence\n[S2] Second sentence")
         
         # 下方维持不变，始终用dialogue_script主流程
-        text_list, spk_list = self._parse_dialogue_script(dialogue_script)
+        text_list, spk_list, pause_after_list = self._parse_dialogue_script(dialogue_script)
         
         used_spk_ids = set(spk_list)
         provided_spk_keys = set(speakers_data.keys())
@@ -528,6 +528,7 @@ class SoulXPodcastInputParser:
             "spk_ids": spk_ids_for_model,
             "use_dialect_prompt": use_dialect_prompt,
             "diff_spk_pause_ms": diff_spk_pause_ms,
+            "pause_after_list": pause_after_list,  # Pause durations in ms after each segment
         }
         
         if use_dialect_prompt:
@@ -538,15 +539,21 @@ class SoulXPodcastInputParser:
         
         return (podcast_input,)
     
-    def _parse_dialogue_script(self, dialogue_script: str) -> tuple[List[str], List[int]]:
+    def _parse_dialogue_script(self, dialogue_script: str) -> tuple[List[str], List[int], List[int]]:
         """
         Parse dialogue script supporting:
         - Multiple speakers (S1-S10)
         - Inline pause tags <|pause:MS|> where MS is milliseconds
         - Multi-line text per speaker
+        
+        Returns:
+            text_list: List of text segments to synthesize
+            spk_list: List of speaker IDs (0-indexed) corresponding to each text segment
+            pause_after_list: List of pause durations (in ms) to insert after each segment
         """
         text_list = []
         spk_list = []
+        pause_after_list = []  # Pause duration in ms to insert after each segment
         
         # Pattern to match speaker tags like [S1] through [S10] with non-greedy content capture
         # Note: This pattern is explicitly coded for S1-S10 matching MAX_SUPPORTED_SPEAKERS
@@ -573,10 +580,11 @@ class SoulXPodcastInputParser:
             if spk_id < 0 or spk_id >= MAX_SUPPORTED_SPEAKERS:
                 raise ValueError(f"Unsupported speaker identifier: S{spk_num}, currently supports S1-S{MAX_SUPPORTED_SPEAKERS}")
             
-            # Split content by pause tags and process each segment
+            # Split content by pause tags to create separate segments
+            # Each pause tag causes a split, creating a new segment with a pause after it
             parts = re.split(r'(<\|pause:\d+\|>)', content)
             
-            current_text_parts = []
+            last_idx_with_text = None
             for part in parts:
                 part = part.strip()
                 if not part:
@@ -584,23 +592,26 @@ class SoulXPodcastInputParser:
                 
                 pause_match = pause_token_pattern.fullmatch(part)
                 if pause_match:
-                    # Skip pause tags - they shouldn't be spoken
-                    # The pause tags are preserved in the original dialogue_script
-                    # but removed from the text that will be synthesized
+                    # This is a pause tag - set the pause duration for the previous text segment
+                    if last_idx_with_text is not None:
+                        try:
+                            pause_ms = int(pause_match.group(1))
+                        except Exception:
+                            pause_ms = 0
+                        pause_after_list[last_idx_with_text] = max(0, pause_ms)
+                    # Don't add pause tags to text_list
                     continue
                 else:
-                    # Regular text
-                    current_text_parts.append(part)
-            
-            if current_text_parts:
-                final_text = ' '.join(current_text_parts)
-                text_list.append(final_text)
-                spk_list.append(spk_id)
+                    # Regular text segment
+                    text_list.append(part)
+                    spk_list.append(spk_id)
+                    pause_after_list.append(0)  # Default no pause, may be updated by next pause tag
+                    last_idx_with_text = len(text_list) - 1
         
         if not text_list:
             raise ValueError("Dialogue script format error, failed to parse any dialogue content. Format should be: [S1] text content\n[S2] text content")
         
-        return text_list, spk_list
+        return text_list, spk_list, pause_after_list
     
     def _parse_json_config(self, json_config: str) -> tuple[Dict[str, Any], str]:
         import json as json_lib
@@ -741,8 +752,9 @@ class SoulXPodcastGenerate:
         
         results_dict = model.forward_longform(**forward_params)
         
-        # Get the pause duration between different speakers
+        # Get the pause durations
         diff_spk_pause_ms = podcast_input.get("diff_spk_pause_ms", 0)
+        pause_after_list = podcast_input.get("pause_after_list", [])
         spk_ids = podcast_input["spk_ids"]
         sample_rate = 24000
         
@@ -760,24 +772,32 @@ class SoulXPodcastGenerate:
             if target_audio is None:
                 target_audio = wav
             else:
-                # Insert pause between different speakers if configured
-                # Ensure we have valid indices for both current and previous speaker
-                if diff_spk_pause_ms > 0 and i > 0 and len(spk_ids) > i:
+                # First, check if there's an inline pause after the previous segment
+                # Inline pauses from <|pause:MS|> tags take precedence
+                prefer_pause_ms = 0
+                if i > 0 and (i - 1) < len(pause_after_list):
+                    prefer_pause_ms = pause_after_list[i - 1]
+                
+                # If no inline pause, check for diff-speaker pause
+                if prefer_pause_ms <= 0 and diff_spk_pause_ms > 0 and i > 0 and len(spk_ids) > i:
                     prev_spk = spk_ids[i - 1]
                     curr_spk = spk_ids[i]
                     if prev_spk != curr_spk:
-                        # Calculate silence length in samples
-                        silence_len = int((diff_spk_pause_ms / 1000.0) * sample_rate)
-                        if silence_len > 0:
-                            # Create silence tensor matching target_audio's dimension
-                            if target_audio.dim() == 2:
-                                silence = torch.zeros((1, silence_len), dtype=target_audio.dtype, device=target_audio.device)
-                                target_audio = torch.cat([target_audio, silence], dim=1)
-                            elif target_audio.dim() == 3:
-                                silence = torch.zeros((target_audio.shape[0], target_audio.shape[1], silence_len), dtype=target_audio.dtype, device=target_audio.device)
-                                target_audio = torch.cat([target_audio, silence], dim=2)
-                            # Also track the pause in ordered_segments
-                            ordered_segments.append((None, silence))
+                        prefer_pause_ms = diff_spk_pause_ms
+                
+                # Insert pause if needed
+                if prefer_pause_ms > 0:
+                    silence_len = int((prefer_pause_ms / 1000.0) * sample_rate)
+                    if silence_len > 0:
+                        # Create silence tensor matching target_audio's dimension
+                        if target_audio.dim() == 2:
+                            silence = torch.zeros((1, silence_len), dtype=target_audio.dtype, device=target_audio.device)
+                            target_audio = torch.cat([target_audio, silence], dim=1)
+                        elif target_audio.dim() == 3:
+                            silence = torch.zeros((target_audio.shape[0], target_audio.shape[1], silence_len), dtype=target_audio.dtype, device=target_audio.device)
+                            target_audio = torch.cat([target_audio, silence], dim=2)
+                        # Also track the pause in ordered_segments
+                        ordered_segments.append((None, silence))
                 
                 # Concatenate the audio segments
                 if target_audio.dim() == 3:
