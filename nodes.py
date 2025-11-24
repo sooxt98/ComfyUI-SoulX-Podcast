@@ -340,14 +340,13 @@ class SoulXPodcastInputParser:
         provided_spk_keys = set(speakers_data.keys())
         provided_spk_ids = {int(key[1:]) - 1 for key in provided_spk_keys}
         
-        # Support up to 10 speakers (S1-S10, which are IDs 0-9)
-        max_supported_speakers = 10
-        invalid_spks = {spk_id for spk_id in used_spk_ids if spk_id < 0 or spk_id >= max_supported_speakers}
+        # Support up to MAX_SUPPORTED_SPEAKERS (defined at module level)
+        invalid_spks = {spk_id for spk_id in used_spk_ids if spk_id < 0 or spk_id >= MAX_SUPPORTED_SPEAKERS}
         if invalid_spks:
             invalid_spk_labels = [f"S{spk_id+1}" for spk_id in sorted(invalid_spks)]
             raise ValueError(
                 f"Unsupported speaker(s) used in dialogue script: {', '.join(invalid_spk_labels)}\n"
-                f"Currently supports up to {max_supported_speakers} speakers (S1 to S{max_supported_speakers})."
+                f"Currently supports up to {MAX_SUPPORTED_SPEAKERS} speakers (S1 to S{MAX_SUPPORTED_SPEAKERS})."
             )
         
         missing_spks = used_spk_ids - provided_spk_ids
@@ -491,8 +490,8 @@ class SoulXPodcastInputParser:
         for text, spk_id in zip(text_list, spk_list):
             text = normalize_text(text)
             
-            if spk_id < 0 or spk_id >= max_supported_speakers:
-                raise ValueError(f"Unsupported speaker index used in dialogue script: {spk_id} (only 0 to {max_supported_speakers-1} are supported, corresponding to S1 to S{max_supported_speakers})")
+            if spk_id < 0 or spk_id >= MAX_SUPPORTED_SPEAKERS:
+                raise ValueError(f"Unsupported speaker index used in dialogue script: {spk_id} (only 0 to {MAX_SUPPORTED_SPEAKERS-1} are supported, corresponding to S1 to S{MAX_SUPPORTED_SPEAKERS})")
             
             formatted_text = f"{SPK_DICT[spk_id]}{TEXT_START}{text}{TEXT_END}{AUDIO_START}"
             text_ids = tokenizer.encode(formatted_text)
@@ -735,16 +734,21 @@ class SoulXPodcastGenerate:
                 target_audio = wav
             else:
                 # Insert pause between different speakers if configured
-                if diff_spk_pause_ms > 0 and i > 0 and i < len(spk_ids):
+                # Check bounds: i > 0 ensures we can access i-1, and i-1 < len(spk_ids) ensures valid spk_ids access
+                if diff_spk_pause_ms > 0 and i > 0 and i - 1 < len(spk_ids) and i < len(spk_ids):
                     prev_spk = spk_ids[i - 1]
                     curr_spk = spk_ids[i]
                     if prev_spk != curr_spk:
                         # Calculate silence length in samples
                         silence_len = int((diff_spk_pause_ms / 1000.0) * sample_rate)
                         if silence_len > 0:
-                            # Create silence tensor with the same shape as wav
-                            silence = torch.zeros((1, silence_len), dtype=wav.dtype, device=wav.device)
-                            target_audio = torch.cat([target_audio, silence], dim=1)
+                            # Create silence tensor matching target_audio's dimension
+                            if target_audio.dim() == 2:
+                                silence = torch.zeros((1, silence_len), dtype=target_audio.dtype, device=target_audio.device)
+                                target_audio = torch.cat([target_audio, silence], dim=1)
+                            elif target_audio.dim() == 3:
+                                silence = torch.zeros((target_audio.shape[0], target_audio.shape[1], silence_len), dtype=target_audio.dtype, device=target_audio.device)
+                                target_audio = torch.cat([target_audio, silence], dim=2)
                 
                 # Concatenate the audio segments
                 if target_audio.dim() == 3:
