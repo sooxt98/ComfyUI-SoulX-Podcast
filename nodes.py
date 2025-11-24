@@ -584,8 +584,10 @@ class SoulXPodcastInputParser:
                 
                 pause_match = pause_token_pattern.fullmatch(part)
                 if pause_match:
-                    # Append pause tag directly
-                    current_text_parts.append(part)
+                    # Skip pause tags - they shouldn't be spoken
+                    # The pause tags are preserved in the original dialogue_script
+                    # but removed from the text that will be synthesized
+                    continue
                 else:
                     # Regular text
                     current_text_parts.append(part)
