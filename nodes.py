@@ -19,8 +19,10 @@ SPK_DICT = [
     "<|SPEAKER_4|>", "<|SPEAKER_5|>", "<|SPEAKER_6|>", "<|SPEAKER_7|>",
     "<|SPEAKER_8|>", "<|SPEAKER_9|>"
 ]
+MAX_SUPPORTED_SPEAKERS = len(SPK_DICT)  # Maximum number of speakers supported (10)
 TEXT_START, TEXT_END, AUDIO_START = "<|text_start|>", "<|text_end|>", "<|semantic_token_start|>"
 TASK_PODCAST = "<|task_podcast|>"
+
 
 
 class SoulXPodcastLoader:
@@ -554,8 +556,8 @@ class SoulXPodcastInputParser:
             
             spk_id = spk_num - 1
             
-            if spk_id < 0 or spk_id >= 10:
-                raise ValueError(f"Unsupported speaker identifier: S{spk_num}, currently supports S1-S10")
+            if spk_id < 0 or spk_id >= MAX_SUPPORTED_SPEAKERS:
+                raise ValueError(f"Unsupported speaker identifier: S{spk_num}, currently supports S1-S{MAX_SUPPORTED_SPEAKERS}")
             
             # Split content by pause tags and process each segment
             parts = re.split(r'(<\|pause:\d+\|>)', content)
@@ -568,13 +570,8 @@ class SoulXPodcastInputParser:
                 
                 pause_match = pause_token_pattern.fullmatch(part)
                 if pause_match:
-                    # If we have accumulated text, add it with the pause
-                    if current_text_parts:
-                        combined_text = ' '.join(current_text_parts) + ' ' + part
-                        current_text_parts = [combined_text]
-                    else:
-                        # Standalone pause tag at the beginning
-                        current_text_parts.append(part)
+                    # Append pause tag directly
+                    current_text_parts.append(part)
                 else:
                     # Regular text
                     current_text_parts.append(part)
