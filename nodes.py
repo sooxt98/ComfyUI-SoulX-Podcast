@@ -686,7 +686,8 @@ class SoulXPodcastGenerate:
             }
         }
     
-    RETURN_TYPES = ("AUDIO",)
+    RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO",)
+    RETURN_NAMES = ("combined_audio", "speaker_1_audio", "speaker_2_audio", "speaker_3_audio", "speaker_4_audio", "speaker_5_audio", "speaker_6_audio", "speaker_7_audio", "speaker_8_audio", "speaker_9_audio", "speaker_10_audio",)
     FUNCTION = "generate"
     CATEGORY = "SoulX-Podcast"
     
@@ -743,8 +744,17 @@ class SoulXPodcastGenerate:
         spk_ids = podcast_input["spk_ids"]
         sample_rate = 24000
         
+        # Track audio segments for each speaker (0-indexed: speaker 0 = S1, speaker 1 = S2, etc.)
+        speaker_audio_segments = {i: [] for i in range(MAX_SUPPORTED_SPEAKERS)}
+        
         target_audio = None
         for i, wav in enumerate(results_dict["generated_wavs"]):
+            # Store this segment for the corresponding speaker
+            if i < len(spk_ids):
+                speaker_id = spk_ids[i]
+                if 0 <= speaker_id < MAX_SUPPORTED_SPEAKERS:
+                    speaker_audio_segments[speaker_id].append(wav.clone())
+            
             if target_audio is None:
                 target_audio = wav
             else:
@@ -779,6 +789,7 @@ class SoulXPodcastGenerate:
                         wav = wav.squeeze(0) if wav.shape[0] == 1 else wav[0]
                         target_audio = torch.cat([target_audio, wav], dim=1)
         
+        # Process combined audio
         if target_audio.dim() == 2:
             audio_tensor = target_audio.unsqueeze(0)
         elif target_audio.dim() == 3:
@@ -788,12 +799,52 @@ class SoulXPodcastGenerate:
         
         sample_rate = 24000
         
-        audio_output = {
+        combined_audio_output = {
             "waveform": audio_tensor,
             "sample_rate": sample_rate
         }
         
-        return (audio_output,)
+        # Create separated speaker audio outputs
+        speaker_outputs = []
+        for speaker_id in range(MAX_SUPPORTED_SPEAKERS):
+            if speaker_audio_segments[speaker_id]:
+                # Concatenate all segments for this speaker
+                speaker_audio = None
+                for seg in speaker_audio_segments[speaker_id]:
+                    if speaker_audio is None:
+                        speaker_audio = seg
+                    else:
+                        # Concatenate segments
+                        if speaker_audio.dim() == 3:
+                            if seg.dim() == 3:
+                                speaker_audio = torch.cat([speaker_audio, seg], dim=2)
+                            else:
+                                seg = seg.unsqueeze(0)
+                                speaker_audio = torch.cat([speaker_audio, seg], dim=2)
+                        elif speaker_audio.dim() == 2:
+                            if seg.dim() == 2:
+                                speaker_audio = torch.cat([speaker_audio, seg], dim=1)
+                            else:
+                                seg = seg.squeeze(0) if seg.shape[0] == 1 else seg[0]
+                                speaker_audio = torch.cat([speaker_audio, seg], dim=1)
+                
+                # Format to match ComfyUI audio format
+                if speaker_audio.dim() == 2:
+                    speaker_audio_tensor = speaker_audio.unsqueeze(0)
+                elif speaker_audio.dim() == 3:
+                    speaker_audio_tensor = speaker_audio
+                else:
+                    speaker_audio_tensor = speaker_audio.unsqueeze(0) if speaker_audio.dim() == 1 else speaker_audio
+                
+                speaker_outputs.append({
+                    "waveform": speaker_audio_tensor,
+                    "sample_rate": sample_rate
+                })
+            else:
+                # No audio for this speaker - return None
+                speaker_outputs.append(None)
+        
+        return (combined_audio_output, *speaker_outputs)
 
 
 NODE_CLASS_MAPPINGS = {
