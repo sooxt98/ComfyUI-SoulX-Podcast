@@ -210,9 +210,23 @@ class SoulXPodcastInputParser:
         S9_prompt_audio=None,
         S10_prompt_audio=None,
         dialogue_script: str = "",
-        diff_spk_pause_ms: int = 0,
+        diff_spk_pause_ms = 0,
         json_config: str = "{}",
     ):
+        # Handle diff_spk_pause_ms type conversion defensively
+        # ComfyUI might pass unexpected values when optional parameters are not connected
+        if diff_spk_pause_ms is None or diff_spk_pause_ms == "":
+            diff_spk_pause_ms = 0
+        elif isinstance(diff_spk_pause_ms, str):
+            try:
+                diff_spk_pause_ms = int(diff_spk_pause_ms)
+            except (ValueError, TypeError):
+                diff_spk_pause_ms = 0
+        elif not isinstance(diff_spk_pause_ms, int):
+            try:
+                diff_spk_pause_ms = int(diff_spk_pause_ms)
+            except (ValueError, TypeError):
+                diff_spk_pause_ms = 0
         DEFAULT_PROMPTS = {
             "S1": "喜欢攀岩、徒步、滑雪的语言爱好者，以及过两天要带着全部家当去景德镇做陶瓷的白日梦想家。",
             "S2": "呃，还有一个就是要跟大家纠正一点，就是我们在看电影的时候，尤其是游戏玩家，看电影的时候，在看到那个到西北那边的这个陕北民谣，嗯，这个可能在想，哎，是不是他是受到了黑神话的启发？",
