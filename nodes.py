@@ -14,7 +14,11 @@ from soulxpodcast.utils.commons import set_all_random_seed
 from soulxpodcast.engine.llm_engine import HFLLMEngine
 import torchaudio.compliance.kaldi as kaldi
 
-SPK_DICT = ["<|SPEAKER_0|>", "<|SPEAKER_1|>", "<|SPEAKER_2|>", "<|SPEAKER_3|>"]
+SPK_DICT = [
+    "<|SPEAKER_0|>", "<|SPEAKER_1|>", "<|SPEAKER_2|>", "<|SPEAKER_3|>",
+    "<|SPEAKER_4|>", "<|SPEAKER_5|>", "<|SPEAKER_6|>", "<|SPEAKER_7|>",
+    "<|SPEAKER_8|>", "<|SPEAKER_9|>"
+]
 TEXT_START, TEXT_END, AUDIO_START = "<|text_start|>", "<|text_end|>", "<|semantic_token_start|>"
 TASK_PODCAST = "<|task_podcast|>"
 
@@ -139,21 +143,36 @@ class SoulXPodcastInputParser:
                 "soulx_model": ("SOULX_MODEL",),
                 "input_mode": (["simple", "json"], {
                     "default": "simple",
-                    "tooltip": "simple: Simple mode (two-person dialogue, using node inputs)\njson: JSON mode (two-person dialogue, using JSON config)"
+                    "tooltip": "simple: Simple mode (multi-speaker dialogue, using node inputs)\njson: JSON mode (multi-speaker dialogue, using JSON config)"
                 }),
             },
             "optional": {
                 "S1_prompt_audio": ("AUDIO",),
                 "S2_prompt_audio": ("AUDIO",),
+                "S3_prompt_audio": ("AUDIO",),
+                "S4_prompt_audio": ("AUDIO",),
+                "S5_prompt_audio": ("AUDIO",),
+                "S6_prompt_audio": ("AUDIO",),
+                "S7_prompt_audio": ("AUDIO",),
+                "S8_prompt_audio": ("AUDIO",),
+                "S9_prompt_audio": ("AUDIO",),
+                "S10_prompt_audio": ("AUDIO",),
                 "dialogue_script": ("STRING", {
                     "multiline": True,
                     "default": "[S1] Hello there, Xiaoxi.\n[S2] Hello, Nenglao!",
-                    "tooltip": "Dialogue script, format:\n[S1] First sentence\n[S2] Second sentence\nThe system will automatically extract the first sentence from each speaker as prompt text"
+                    "tooltip": "Dialogue script, format:\n[S1] First sentence\n[S2] Second sentence\n[S3] Third sentence\n...\nSupports inline pause tags: <|pause:MS|> where MS is milliseconds\nExample: [S1] Hello <|pause:500|> how are you?\nThe system will automatically extract the first sentence from each speaker as prompt text"
+                }),
+                "diff_spk_pause_ms": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 5000,
+                    "step": 50,
+                    "tooltip": "Pause duration in milliseconds between different speakers"
                 }),
                 "json_config": ("STRING", {
                     "multiline": True,
                     "default": "{}",
-                    "tooltip": "JSON format config, supports two-person dialogue. Format:\n{\n  \"speakers\": {\n    \"S1\": {\"prompt_audio\": \"AUDIO input\", \"dialect_prompt\": \"<|Henan|>...\"},\n    \"S2\": {...}\n  },\n  \"dialogue_script\": \"[S1]...\\n[S2]...\"\n}\nNote: prompt_audio needs to be connected to AUDIO input first and referenced by variable name"
+                    "tooltip": "JSON format config, supports multi-speaker dialogue (up to 10 speakers). Format:\n{\n  \"speakers\": {\n    \"S1\": {\"prompt_audio\": \"AUDIO input\", \"dialect_prompt\": \"<|Henan|>...\"},\n    \"S2\": {...},\n    ...\n  },\n  \"dialogue_script\": \"[S1]...\\n[S2]...\\n[S3]...\"\n}\nNote: prompt_audio needs to be connected to AUDIO input first and referenced by variable name"
                 }),
             }
         }
@@ -180,12 +199,29 @@ class SoulXPodcastInputParser:
         input_mode: str = "simple",
         S1_prompt_audio=None,
         S2_prompt_audio=None,
+        S3_prompt_audio=None,
+        S4_prompt_audio=None,
+        S5_prompt_audio=None,
+        S6_prompt_audio=None,
+        S7_prompt_audio=None,
+        S8_prompt_audio=None,
+        S9_prompt_audio=None,
+        S10_prompt_audio=None,
         dialogue_script: str = "",
+        diff_spk_pause_ms: int = 0,
         json_config: str = "{}",
     ):
         DEFAULT_PROMPTS = {
             "S1": "喜欢攀岩、徒步、滑雪的语言爱好者，以及过两天要带着全部家当去景德镇做陶瓷的白日梦想家。",
-            "S2": "呃，还有一个就是要跟大家纠正一点，就是我们在看电影的时候，尤其是游戏玩家，看电影的时候，在看到那个到西北那边的这个陕北民谣，嗯，这个可能在想，哎，是不是他是受到了黑神话的启发？"
+            "S2": "呃，还有一个就是要跟大家纠正一点，就是我们在看电影的时候，尤其是游戏玩家，看电影的时候，在看到那个到西北那边的这个陕北民谣，嗯，这个可能在想，哎，是不是他是受到了黑神话的启发？",
+            "S3": "Speaker 3 default prompt text",
+            "S4": "Speaker 4 default prompt text",
+            "S5": "Speaker 5 default prompt text",
+            "S6": "Speaker 6 default prompt text",
+            "S7": "Speaker 7 default prompt text",
+            "S8": "Speaker 8 default prompt text",
+            "S9": "Speaker 9 default prompt text",
+            "S10": "Speaker 10 default prompt text",
         }
         
         config = soulx_model["config"]
@@ -209,6 +245,14 @@ class SoulXPodcastInputParser:
             audio_inputs = {
                 "S1": S1_prompt_audio,
                 "S2": S2_prompt_audio,
+                "S3": S3_prompt_audio,
+                "S4": S4_prompt_audio,
+                "S5": S5_prompt_audio,
+                "S6": S6_prompt_audio,
+                "S7": S7_prompt_audio,
+                "S8": S8_prompt_audio,
+                "S9": S9_prompt_audio,
+                "S10": S10_prompt_audio,
             }
             
             parsed_script_texts = {}
@@ -255,20 +299,26 @@ class SoulXPodcastInputParser:
                     pass
             
             # prompt_text 只用于音色克隆，不参与播客内容生成。
-            if S1_prompt_audio is not None:
-                prompt_text = DEFAULT_PROMPTS["S1"]
-                speakers_data["S1"] = {
-                    "prompt_audio": S1_prompt_audio,
-                    "prompt_text": prompt_text,
-                    "dialect_prompt": ""
-                }
-            if S2_prompt_audio is not None:
-                prompt_text = DEFAULT_PROMPTS["S2"]
-                speakers_data["S2"] = {
-                    "prompt_audio": S2_prompt_audio,
-                    "prompt_text": prompt_text,
-                    "dialect_prompt": ""
-                }
+            audio_inputs_simple = {
+                "S1": S1_prompt_audio,
+                "S2": S2_prompt_audio,
+                "S3": S3_prompt_audio,
+                "S4": S4_prompt_audio,
+                "S5": S5_prompt_audio,
+                "S6": S6_prompt_audio,
+                "S7": S7_prompt_audio,
+                "S8": S8_prompt_audio,
+                "S9": S9_prompt_audio,
+                "S10": S10_prompt_audio,
+            }
+            for spk_key, audio in audio_inputs_simple.items():
+                if audio is not None:
+                    prompt_text = DEFAULT_PROMPTS.get(spk_key, f"{spk_key} default prompt")
+                    speakers_data[spk_key] = {
+                        "prompt_audio": audio,
+                        "prompt_text": prompt_text,
+                        "dialect_prompt": ""
+                    }
         
         if not speakers_data:
             raise ValueError(
@@ -286,14 +336,16 @@ class SoulXPodcastInputParser:
         
         used_spk_ids = set(spk_list)
         provided_spk_keys = set(speakers_data.keys())
-        provided_spk_ids = {int(key[1]) - 1 for key in provided_spk_keys}
+        provided_spk_ids = {int(key[1:]) - 1 for key in provided_spk_keys}
         
-        invalid_spks = {spk_id for spk_id in used_spk_ids if spk_id < 0 or spk_id >= 2}
+        # Support up to 10 speakers (S1-S10, which are IDs 0-9)
+        max_supported_speakers = 10
+        invalid_spks = {spk_id for spk_id in used_spk_ids if spk_id < 0 or spk_id >= max_supported_speakers}
         if invalid_spks:
             invalid_spk_labels = [f"S{spk_id+1}" for spk_id in sorted(invalid_spks)]
             raise ValueError(
                 f"Unsupported speaker(s) used in dialogue script: {', '.join(invalid_spk_labels)}\n"
-                f"Currently only supports two-person dialogue (S1 and S2), S3, S4, etc. are not supported."
+                f"Currently supports up to {max_supported_speakers} speakers (S1 to S{max_supported_speakers})."
             )
         
         missing_spks = used_spk_ids - provided_spk_ids
@@ -305,7 +357,10 @@ class SoulXPodcastInputParser:
                 f"Please ensure audio input is provided for all speakers used in the dialogue script."
             )
         
-        speaker_keys = ["S1", "S2"]
+        # Get the maximum speaker ID used in the dialogue
+        max_spk_id = max(used_spk_ids) if used_spk_ids else 0
+        speaker_keys = [f"S{i+1}" for i in range(max_spk_id + 1)]
+        
         prompt_wav_list = []
         prompt_text_list = []
         dialect_prompt_text_list = []
@@ -434,8 +489,8 @@ class SoulXPodcastInputParser:
         for text, spk_id in zip(text_list, spk_list):
             text = normalize_text(text)
             
-            if spk_id < 0 or spk_id >= 2:
-                raise ValueError(f"Unsupported speaker index used in dialogue script: {spk_id} (only 0 and 1 are supported, corresponding to S1 and S2)")
+            if spk_id < 0 or spk_id >= max_supported_speakers:
+                raise ValueError(f"Unsupported speaker index used in dialogue script: {spk_id} (only 0 to {max_supported_speakers-1} are supported, corresponding to S1 to S{max_supported_speakers})")
             
             formatted_text = f"{SPK_DICT[spk_id]}{TEXT_START}{text}{TEXT_END}{AUDIO_START}"
             text_ids = tokenizer.encode(formatted_text)
@@ -457,6 +512,7 @@ class SoulXPodcastInputParser:
             "spk_emb_for_flow": spk_emb_for_flow,
             "spk_ids": spk_ids_for_model,
             "use_dialect_prompt": use_dialect_prompt,
+            "diff_spk_pause_ms": diff_spk_pause_ms,
         }
         
         if use_dialect_prompt:
@@ -468,44 +524,68 @@ class SoulXPodcastInputParser:
         return (podcast_input,)
     
     def _parse_dialogue_script(self, dialogue_script: str) -> tuple[List[str], List[int]]:
+        """
+        Parse dialogue script supporting:
+        - Multiple speakers (S1-S10)
+        - Inline pause tags <|pause:MS|> where MS is milliseconds
+        - Multi-line text per speaker
+        """
         text_list = []
         spk_list = []
         
-        lines = dialogue_script.strip().split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
+        # Pattern to match speaker tags like [S1] through [S10] with non-greedy content capture
+        # This allows multi-line content between speaker tags
+        pattern = r'\[S([1-9]|10)\](.*?)(?=\[S(?:[1-9]|10)\]|$)'
+        matches = list(re.finditer(pattern, dialogue_script, re.DOTALL))
+        
+        pause_token_pattern = re.compile(r'<\|pause:(\d+)\|>')
+        
+        for match in matches:
+            spk_num_str = match.group(1)
+            content = match.group(2).strip()
+            
+            if not content:
                 continue
             
-            pattern = r'(\[S([1-9])\])(.+)'
-            match = re.match(pattern, line)
-            if match:
-                spk_label = match.group(1)
-                spk_num = int(match.group(2))
-                text = match.group(3).strip()
+            try:
+                spk_num = int(spk_num_str)
+            except Exception:
+                continue
+            
+            spk_id = spk_num - 1
+            
+            if spk_id < 0 or spk_id >= 10:
+                raise ValueError(f"Unsupported speaker identifier: S{spk_num}, currently supports S1-S10")
+            
+            # Split content by pause tags and process each segment
+            parts = re.split(r'(<\|pause:\d+\|>)', content)
+            
+            current_text_parts = []
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
                 
-                spk_id = spk_num - 1
-                
-                if spk_id < 0 or spk_id >= 2:
-                    raise ValueError(f"Unsupported speaker identifier: {spk_label}, currently only supports two-person dialogue (S1 and S2)")
-                
-                text_list.append(text)
-                spk_list.append(spk_id)
-            else:
-                loose_pattern = r'\[S([1-9])\]\s*(.+)'
-                loose_match = re.match(loose_pattern, line)
-                if loose_match:
-                    spk_num = int(loose_match.group(1))
-                    text = loose_match.group(2).strip()
-                    spk_id = spk_num - 1
-                    if 0 <= spk_id < 2:
-                        text_list.append(text)
-                        spk_list.append(spk_id)
+                pause_match = pause_token_pattern.fullmatch(part)
+                if pause_match:
+                    # If we have accumulated text, add it with the pause
+                    if current_text_parts:
+                        combined_text = ' '.join(current_text_parts) + ' ' + part
+                        current_text_parts = [combined_text]
                     else:
-                        raise ValueError(f"Unsupported speaker identifier: S{spk_num}, currently only supports two-person dialogue (S1 and S2)")
+                        # Standalone pause tag at the beginning
+                        current_text_parts.append(part)
+                else:
+                    # Regular text
+                    current_text_parts.append(part)
+            
+            if current_text_parts:
+                final_text = ' '.join(current_text_parts)
+                text_list.append(final_text)
+                spk_list.append(spk_id)
         
         if not text_list:
-            raise ValueError("Dialogue script format error, failed to parse any dialogue content. Format should be: [S1] text content")
+            raise ValueError("Dialogue script format error, failed to parse any dialogue content. Format should be: [S1] text content\n[S2] text content")
         
         return text_list, spk_list
     
@@ -647,11 +727,29 @@ class SoulXPodcastGenerate:
         
         results_dict = model.forward_longform(**forward_params)
         
+        # Get the pause duration between different speakers
+        diff_spk_pause_ms = podcast_input.get("diff_spk_pause_ms", 0)
+        spk_ids = podcast_input["spk_ids"]
+        sample_rate = 24000
+        
         target_audio = None
-        for wav in results_dict["generated_wavs"]:
+        for i, wav in enumerate(results_dict["generated_wavs"]):
             if target_audio is None:
                 target_audio = wav
             else:
+                # Insert pause between different speakers if configured
+                if diff_spk_pause_ms > 0 and i > 0 and i < len(spk_ids):
+                    prev_spk = spk_ids[i - 1]
+                    curr_spk = spk_ids[i]
+                    if prev_spk != curr_spk:
+                        # Calculate silence length in samples
+                        silence_len = int((diff_spk_pause_ms / 1000.0) * sample_rate)
+                        if silence_len > 0:
+                            # Create silence tensor with the same shape as wav
+                            silence = torch.zeros((1, silence_len), dtype=wav.dtype, device=wav.device)
+                            target_audio = torch.cat([target_audio, silence], dim=1)
+                
+                # Concatenate the audio segments
                 if target_audio.dim() == 3:
                     if wav.dim() == 3:
                         target_audio = torch.cat([target_audio, wav], dim=2)
