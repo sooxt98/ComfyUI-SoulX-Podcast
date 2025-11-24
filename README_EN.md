@@ -8,9 +8,10 @@ ComfyUI-SoulX-Podcast is a custom node plugin for ComfyUI that packages the core
 
 ## ✨ Key Features
 
-- 🎙️ **Two-Person Podcast Generation**: Supports dialogue generation between two speakers
+- 🎙️ **Multi-Speaker Podcast Generation**: Supports dialogue generation with up to 10 speakers (S1-S10)
 - 🌍 **Multi-Dialect Support**: Supports multiple Chinese dialects (requires dialect model)
 - 📝 **Flexible Dialogue Scripts**: Define dialogues through simple script format
+- ⏸️ **Pause Control**: Supports inline pause tags `<|pause:MS|>` and configurable pauses between different speakers
 - 🎵 **Prompt Audio Driven**: Clone speaker voice characteristics using reference audio (Suno)
 - 🔄 **Long-Form Generation**: Supports generation of long-form podcast content
 - 🎛️ **Visual Workflow**: Complete the entire generation process through node connections in ComfyUI
@@ -112,7 +113,7 @@ This example includes:
 
 ### Node 2: SoulX Podcast Input Parser
 
-**Function**: Processes all input data (audio, text, dialogue script) and preprocesses it into a format usable by the model. **Supports two-person dialogue (S1 and S2)**.
+**Function**: Processes all input data (audio, text, dialogue script) and preprocesses it into a format usable by the model. **Supports up to 10 speakers (S1-S10)**.
 
 #### Required Inputs
 
@@ -126,8 +127,10 @@ This example includes:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | **S1_prompt_audio** | AUDIO | Speaker 1 (S1) prompt audio for extracting voice characteristics |
-| **S2_prompt_audio** | AUDIO | Speaker 2 (S2) prompt audio (optional, for two-person dialogue) |
-| **dialogue_script** | Multi-line text | Dialogue script defining the entire podcast dialogue<br>Format: `[S1] First sentence\n[S2] Second sentence`<br>The system automatically extracts the first sentence from each speaker as prompt text |
+| **S2_prompt_audio** | AUDIO | Speaker 2 (S2) prompt audio (optional, for multi-speaker dialogue) |
+| **S3-S10_prompt_audio** | AUDIO | Speaker 3-10 prompt audio (optional, connect as needed) |
+| **dialogue_script** | Multi-line text | Dialogue script defining the entire podcast dialogue<br>Format: `[S1] First sentence\n[S2] Second sentence\n[S3] Third sentence`<br>Supports inline pause tags: `[S1] Hello <|pause:500|> world`<br>The system automatically extracts the first sentence from each speaker as prompt text |
+| **diff_spk_pause_ms** | Integer | Pause duration in milliseconds between different speakers, default is 0 |
 
 #### Output
 
@@ -226,7 +229,23 @@ S1 Hello  # ❌ Missing brackets
 ```
 [S1] Hello  # ✅ Correct
 [S2] Hello  # ✅ Correct
+[S3] Hello  # ✅ Correct (supports S1-S10)
 ```
+
+### Q5: How to use pause control?
+
+**Inline pause tags**:
+```
+[S1] The weather is nice today <|pause:500|> let's go for a walk <|pause:800|> shall we?
+[S2] Sure <|pause:200|> let's go
+```
+- `<|pause:MS|>` where MS is the pause duration in milliseconds
+- Multiple pause tags can be inserted in the same speaker's text
+
+**Pause between speakers**:
+- Set the `diff_spk_pause_ms` parameter in the Input Parser node
+- This parameter controls the automatically inserted pause duration (milliseconds) between different speakers
+- Default value is 0 (no pause)
 
 ---
 
