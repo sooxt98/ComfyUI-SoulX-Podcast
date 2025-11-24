@@ -535,7 +535,8 @@ class SoulXPodcastInputParser:
         spk_list = []
         
         # Pattern to match speaker tags like [S1] through [S10] with non-greedy content capture
-        # This allows multi-line content between speaker tags
+        # Note: This pattern is explicitly coded for S1-S10 matching MAX_SUPPORTED_SPEAKERS
+        # If MAX_SUPPORTED_SPEAKERS changes, this pattern must be updated accordingly
         pattern = r'\[S([1-9]|10)\](.*?)(?=\[S(?:[1-9]|10)\]|$)'
         matches = list(re.finditer(pattern, dialogue_script, re.DOTALL))
         
@@ -734,8 +735,8 @@ class SoulXPodcastGenerate:
                 target_audio = wav
             else:
                 # Insert pause between different speakers if configured
-                # Check bounds: i > 0 ensures we can access i-1, and i-1 < len(spk_ids) ensures valid spk_ids access
-                if diff_spk_pause_ms > 0 and i > 0 and i - 1 < len(spk_ids) and i < len(spk_ids):
+                # Ensure we have valid indices for both current and previous speaker
+                if diff_spk_pause_ms > 0 and i > 0 and len(spk_ids) > i:
                     prev_spk = spk_ids[i - 1]
                     curr_spk = spk_ids[i]
                     if prev_spk != curr_spk:
